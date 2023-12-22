@@ -20,6 +20,8 @@
 Electra 모델은 자연어 처리 작업에 효과적인 최신 변형기반(transformer-based) 모델입니다. BERT와 같은 다른 모델들과 달리 사전 훈련 방식에서 독특한 접근 방식을 취합니다.
 
 ### 데이터 전처리
+<img width="672" alt="스크린샷 2023-12-22 오후 8 24 13" src="https://github.com/kimsungmin1011/Open-source-AI-Project/assets/122242600/580ac15c-2f3e-48a1-8931-98746d6d5519">
+
 **파일:** `preprocessing.py`
 
 이 스크립트는 훈련을 위한 데이터 준비를 담당합니다. 데이터를 정리하고, 정규화하며, Electra 모델에 적합한 형식으로 구조화하는 작업을 포함합니다.
