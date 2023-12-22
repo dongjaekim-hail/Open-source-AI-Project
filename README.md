@@ -31,3 +31,17 @@ Electra 모델은 자연어 처리 작업에 효과적이고 효율적인 최신
 pip install accelerate -U
 pip install transformers[torch]
 pip install datasets
+```
+### 모델 학습
+<img width="1127" alt="스크린샷 2023-12-22 오후 8 17 05" src="https://github.com/kimsungmin1011/-AI-/assets/122242600/8a1d6768-a702-4a75-b305-1cc7d6dd8abf">
+
+**파일:** `training.py`
+
+이 스크립트는 전처리된 데이터로 Electra 모델을 훈련하는 과정을 설명합니다. 모델 설정, 훈련 매개변수 정의, 훈련 프로세스 시작 등을 포함합니다.
+
+### 모델 검증
+<img width="1168" alt="스크린샷 2023-12-22 오후 8 18 40" src="https://github.com/kimsungmin1011/-AI-/assets/122242600/fd28f4e0-9a05-41b7-b59d-2b74471cfc38">
+
+**파일:** `validation.py`
+
+훈련 후, 이 스크립트를 사용하여 모델의 성능을 검증합니다. 모델을 보이지 않는 데이터로 테스트하는 기능을 포함하며, 금융 및 법률 맥락에서의 정확성과 효과성을 평가하는 지표를 제공합니다.
