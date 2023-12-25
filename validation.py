@@ -1,48 +1,154 @@
-from transformers import ElectraTokenizer, ElectraForQuestionAnswering
+from transformers import (
+    ElectraTokenizer,
+    ElectraForQuestionAnswering,
+    Trainer,
+    TrainingArguments,
+)
+from datasets import load_dataset
 import torch
 
-# 모델과 토크나이저 로드
+
+# 데이터셋 로드 함수 정의
+def load_data(train_path, validation_path):
+    return load_dataset(
+        "json", data_files={"training": train_path, "validation": validation_path}
+    )
+
+
+# JSON 파일 경로
+train_json_path = "training.json"
+validation_json_path = "validation.json"
+
+# 데이터셋 로드
+dataset = load_data(train_json_path, validation_json_path)
+
+# 토크나이저 및 모델 초기화 (한국어 모델로 변경)
 tokenizer = ElectraTokenizer.from_pretrained("monologg/koelectra-base-v3-discriminator")
 model = ElectraForQuestionAnswering.from_pretrained(
     "monologg/koelectra-base-v3-discriminator"
 )
 
-# 제공된 데이터
-context = "일본의 법정 본인부담은 진료비의 일정률을 부담하는 정률제(coinsurance)방식이다. 본인부담분은 전체 진료비의 30%이며, 70~75세 미만 20%, 75세 이상 10%, 취학 전 아동은 20% 수준이다. 다만, 70세 이상에서도 일정소득 이상은 30%(일정소득 이상은 부부합산 연 소득 520만 엔 이상, 독신 383만 엔 이상)의 본인부담이 발생한다."
-question = "자기가 부담하는 비용이 일본의 모든 진료비에서 차지하는 비율은 30%니"
 
-# 질문과 문맥을 토크나이징 (최대 길이 512로 설정)
-inputs = tokenizer.encode_plus(
-    question,
-    context,
-    add_special_tokens=True,
-    max_length=512,
-    truncation=True,
-    return_tensors="pt",
+# 데이터셋 전처리 함수 (한국어 대응으로 수정)
+def preprocess_data(examples):
+    tokenized_inputs = tokenizer(
+        examples["question"],
+        examples["context"],
+        truncation=True,
+        padding=True,
+        max_length=512,
+        stride=128,
+        return_tensors="pt",
+    )
+
+    start_positions = []
+    end_positions = []
+    for i in range(len(examples["question"])):
+        # 한국어 답변 위치 찾기
+        answer = examples["answer"][i]
+        if answer == "Yes":
+            answer_str = "예"
+        else:
+            answer_str = "아니요"
+        answer_str = examples["clue_text"][i]
+
+        # context 내에서 해당 문자열의 위치 찾기
+        start_position = examples["context"][i].find(answer_str)
+        end_position = start_position + len(answer_str) - 1
+
+        start_positions.append(start_position)
+        end_positions.append(end_position)
+
+    tokenized_inputs["start_positions"] = start_positions
+    tokenized_inputs["end_positions"] = end_positions
+
+    # for those who start_positions == -1, remove the data from tokenized_inputs
+    # tokenized_inputs = {key: [value[i] for i in range(len(start_positions)) if start_positions[i] != -1] for key, value in tokenized_inputs.items()}
+
+    return tokenized_inputs
+
+
+# 전처리 함수 적용
+encoded_dataset = dataset.map(preprocess_data, batched=True)
+
+# 커스텀 손실 함수 정의
+class CustomTrainer(Trainer):
+    def compute_loss(self, model, inputs, return_outputs=False):
+        outputs = model(**inputs)
+        loss = outputs.loss
+        return (loss, outputs) if return_outputs else loss
+
+
+# load model from checkpoint in the results/tmp-checkpoint-94000
+model = ElectraForQuestionAnswering.from_pretrained(
+    "results/tmp-checkpoint-94000"
 )
-input_ids = inputs["input_ids"].tolist()[0]
 
-# 모델로부터 답변 얻기
-outputs = model(**inputs)
-answer_start_scores = outputs.start_logits
-answer_end_scores = outputs.end_logits
-
-# 가장 높은 점수를 가진 시작점과 끝점 찾기
-answer_start = torch.argmax(answer_start_scores)
-answer_end = torch.argmax(answer_end_scores) + 1
-
-# 토큰을 문자열로 변환하여 답변 추출
-extracted_answer = tokenizer.convert_tokens_to_string(
-    tokenizer.convert_ids_to_tokens(input_ids[answer_start:answer_end])
+# 트레이닝 설정
+training_args = TrainingArguments(
+    output_dir="./results",
+    evaluation_strategy="epoch",
+    learning_rate=2e-5,
+    per_device_train_batch_size=1,
+    per_device_eval_batch_size=1,
+    num_train_epochs=3,
+    weight_decay=0.01,
 )
 
-print(extracted_answer)
+class CustomTrainer(Trainer):
+    def compute_loss(self, model, inputs, return_outputs=False):
+        outputs = model(**inputs)
+        loss = outputs.loss
+        return (loss, outputs) if return_outputs else loss
+trainer = CustomTrainer(
+    model=model,
+    args=training_args,
+    train_dataset=encoded_dataset["training"],
+    eval_dataset=encoded_dataset["validation"],
+)
 
-# 답변이 문맥의 정보와 일치하는지 판단
-if "30 %" in extracted_answer:
-    final_answer = "Yes"
-else:
-    final_answer = "No"
 
-# 최종 답변 출력
-print("답변:", final_answer)
+# get inference from the model
+inferred_output = trainer.predict(encoded_dataset["validation"])
+
+import numpy as np
+
+# Assuming inferred_output is the result from trainer.predict
+predictions = inferred_output.predictions
+
+# Convert logits to probabilities (softmax)
+start_logits, end_logits = predictions
+start_probs = torch.softmax(torch.tensor(start_logits), dim=-1).numpy()
+end_probs = torch.softmax(torch.tensor(end_logits), dim=-1).numpy()
+
+# Find the token positions with the highest start and end probabilities
+start_indexes = np.argmax(start_probs, axis=1)
+end_indexes = np.argmax(end_probs, axis=1)
+
+answers = []
+
+for i, (start_index, end_index) in enumerate(zip(start_indexes, end_indexes)):
+    # Map token positions to character positions in the original context
+    context = encoded_dataset["validation"]["context"][i]
+    # Extract the answer text
+    answer = context[start_index:end_index+ 1]
+    answers.append(answer)
+
+clue_text = encoded_dataset["validation"]["clue_text"]
+answer_percent = []
+
+# comparison between the predicted answer and the clue_text, just showing
+for count, answer in enumerate(answers):
+    print("Predicted answer: \n")
+    print(answer)
+    print("Clue text: \n")
+    print(clue_text[count])
+    # calculate the overlap score
+    overlap_score = len(set(answer) & set(clue_text[count])) / len(set(answer) | set(clue_text[count]))
+    print("\t\tOverlap score: ", overlap_score)
+    print("=====================================")
+    answer_percent.append(overlap_score)
+
+
+# final score
+print("Final score: ", np.mean(answer_percent))
